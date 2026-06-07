@@ -1,0 +1,110 @@
+version: "3.8"
+
+# ─── Networks ─────────────────────────────────────────────────────────────────
+networks:
+  trading-network:
+    driver: bridge
+
+# ─── Named Volumes ────────────────────────────────────────────────────────────
+volumes:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+
+# ─── Services ─────────────────────────────────────────────────────────────────
+services:
+
+  # ── Matching Engine ──────────────────────────────────────────────────────────
+  matching-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: matching-engine:latest
+    container_name: matching-engine
+    ports:
+      - "8080:8080"   # REST API + WebSocket + /metrics
+      - "9090:9090"   # Reserved: dedicated metrics server (optional)
+    environment:
+      ME_SERVER_PORT: "8080"
+      ME_SERVER_READTIMEOUT: "30s"
+      ME_SERVER_WRITETIMEOUT: "30s"
+      ME_SERVER_SHUTDOWNTIMEOUT: "10s"
+      ME_ENGINE_EVENTBUFFERSIZE: "10000"
+      ME_REDIS_ADDR: "redis:6379"
+      ME_REDIS_PASSWORD: ""
+      ME_REDIS_DB: "0"
+      ME_REDIS_ENABLED: "true"
+      ME_LOG_LEVEL: "info"
+      ME_LOG_JSON: "true"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - trading-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --appendfsync everysec
+    networks:
+      - trading-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ── Prometheus ───────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9091:9090"   # Exposed on 9091 to avoid conflict with the engine's 9090
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--web.enable-lifecycle"
+    depends_on:
+      matching-engine:
+        condition: service_healthy
+    networks:
+      - trading-network
+    restart: unless-stopped
+
+  # ── Grafana ──────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: "admin"
+      GF_SECURITY_ADMIN_PASSWORD: "admin"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - trading-network
+    restart: unless-stopped

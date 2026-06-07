@@ -1,0 +1,28 @@
+# Compiled binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+server
+matching-engine
+bin/
+
+# Test artifacts
+*.out
+coverage.html
+
+# Environment files (never commit secrets)
+.env
+*.env
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Docker volumes (if mounted locally)
+data/
